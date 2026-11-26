@@ -107,7 +107,9 @@ jobs:
 
       - name: Publish release
         env:
-          GH_TOKEN: ${{ github.token }}
+          # GITHUB_TOKEN on forks may stay read-only for the releases API even
+          # with default_workflow_permissions=write; a user PAT is reliable.
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
           # Replace any earlier fork release under the same tag; the tag must
