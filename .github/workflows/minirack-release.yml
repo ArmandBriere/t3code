@@ -27,6 +27,9 @@ on:
         description: Release tag the npm launcher downloads from (e.g. v0.1.9)
         required: true
         default: "v0.1.9"
+  push:
+    branches:
+      - "minirack/**"
 
 permissions:
   contents: write
@@ -55,7 +58,7 @@ jobs:
           install-args: --filter=t3... --filter=@t3tools/scripts...
 
       - name: Align package versions to release version
-        run: node scripts/update-release-package-versions.ts "${{ inputs.version }}"
+        run: node scripts/update-release-package-versions.ts "${{ inputs.version || '0.1.9' }}"
 
       # Builds the server bundle plus the web client into apps/server/dist.
       - name: Build JS bundle
@@ -87,12 +90,12 @@ jobs:
           node scripts/build-cli-archive.ts \
             --platform linux \
             --arch x64 \
-            --version "${{ inputs.version }}" \
+            --version "${{ inputs.version || '0.1.9' }}" \
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
             --output-dir release-cli
 
       - name: Smoke-test CLI archive
-        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version }}"
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version || '0.1.9' }}"
 
       # The npm launcher validates the archive against this file by name.
       - name: Write SHA256SUMS
@@ -109,11 +112,11 @@ jobs:
           set -euo pipefail
           # Replace any earlier fork release under the same tag; the tag must
           # point at this patched tree, not at the inherited upstream tag.
-          gh release delete "${{ inputs.tag }}" --yes --cleanup-tag || true
-          git push origin ":refs/tags/${{ inputs.tag }}" || true
-          gh release create "${{ inputs.tag }}" \
+          gh release delete "${{ inputs.tag || 'v0.1.9' }}" --yes --cleanup-tag || true
+          git push origin ":refs/tags/${{ inputs.tag || 'v0.1.9' }}" || true
+          gh release create "${{ inputs.tag || 'v0.1.9' }}" \
             --target "$GITHUB_SHA" \
-            --title "${{ inputs.tag }} (minirack patched)" \
+            --title "${{ inputs.tag || 'v0.1.9' }} (minirack patched)" \
             --notes "Minirack fork runtime: T3CODE_PUBLIC_URL, T3CODE_CLIENT_SESSION_TTL_DAYS, T3CODE_CONTAINER_MODE. Built from $GITHUB_SHA." \
-            release-cli/t3-${{ inputs.version }}-linux-x64.tar.gz \
+            release-cli/t3-${{ inputs.version || '0.1.9' }}-linux-x64.tar.gz \
             release-cli/SHA256SUMS
