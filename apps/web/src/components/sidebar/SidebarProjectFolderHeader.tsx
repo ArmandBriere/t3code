@@ -35,8 +35,8 @@ export function sidebarFolderRowId(projectKey: string) {
 
 /**
  * A project folder in the boring sidebar. It reads like a shelf header: a trailing
- * count and chevron, with the count and a status dot only while it is closed, so a
- * closed folder still says when a hidden thread needs you.
+ * count and chevron, with the count only while it is closed. The status dot shows
+ * whenever a thread it does not list needs you, closed or past the preview.
  */
 export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHeader(props: {
   group: SidebarProjectSnapshot;
@@ -55,19 +55,20 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const dot = collapsed
-    ? resolveSidebarFolderDot(
-        hiddenThreads.map((thread) => ({
-          ...thread,
-          lastVisitedAt: resolveThreadLastVisitedAt(
-            thread.lastVisitedAt,
-            localLastVisitedAtById[
-              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
-            ],
-          ),
-        })),
-      )
-    : null;
+  const dot =
+    hiddenThreads.length > 0
+      ? resolveSidebarFolderDot(
+          hiddenThreads.map((thread) => ({
+            ...thread,
+            lastVisitedAt: resolveThreadLastVisitedAt(
+              thread.lastVisitedAt,
+              localLastVisitedAtById[
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+              ],
+            ),
+          })),
+        )
+      : null;
   return (
     <li
       data-testid="sidebar-project-folder"
@@ -93,7 +94,14 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           {group.displayName}
         </span>
         {dot ? (
-          <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
+          <span
+            className={cn(
+              "size-1.5 shrink-0 rounded-full",
+              // An open folder has no count, so the dot keeps clear of New thread itself.
+              !collapsed && "me-5",
+              FOLDER_DOT_CLASS_NAME[dot],
+            )}
+          >
             <span className="sr-only">{m(FOLDER_DOT_LABEL[dot])}</span>
           </span>
         ) : null}

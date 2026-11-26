@@ -361,6 +361,9 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
+  // Boring sidebar folders listing every thread, by project key; resets on reload.
+  sidebarFolderShowAllByKey: Readonly<Record<string, true>>;
+  setSidebarFolderShowAll: (projectKey: string, showAll: boolean) => void;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
@@ -376,6 +379,15 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  sidebarFolderShowAllByKey: {},
+  setSidebarFolderShowAll: (projectKey, showAll) =>
+    set((state) => {
+      if ((state.sidebarFolderShowAllByKey[projectKey] === true) === showAll) return state;
+      const next: Record<string, true> = { ...state.sidebarFolderShowAllByKey };
+      if (showAll) next[projectKey] = true;
+      else delete next[projectKey];
+      return { sidebarFolderShowAllByKey: next };
+    }),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>

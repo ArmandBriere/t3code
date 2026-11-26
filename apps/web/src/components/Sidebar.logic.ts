@@ -1026,8 +1026,8 @@ export function resolveWindowTitleThreadStatus(
 }
 
 /**
- * The dot on a closed boring-sidebar folder: the most urgent state among its
- * hidden threads. Waiting threads stay quiet, like their rows.
+ * The dot on a boring-sidebar folder: the most urgent state among the threads
+ * it does not list. Waiting threads stay quiet, like their rows.
  */
 export function resolveSidebarFolderDot(
   threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
@@ -1099,6 +1099,30 @@ export function groupSidebarThreadsByProject<
     folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
   }
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
+}
+
+export const SIDEBAR_FOLDER_PREVIEW_COUNT = 6;
+
+/**
+ * The rows an open boring folder lists: its first few, or all of them once the
+ * user shows more. The open thread stays listed wherever it sorts.
+ */
+export function previewSidebarFolderThreads<TThread>(
+  threads: readonly TThread[],
+  input: { readonly showAll: boolean; readonly isRouteThread: (thread: TThread) => boolean },
+): { threads: readonly TThread[]; toggle: "more" | "less" | null; hiddenCount: number } {
+  if (threads.length <= SIDEBAR_FOLDER_PREVIEW_COUNT) {
+    return { threads, toggle: null, hiddenCount: 0 };
+  }
+  const visible = threads.slice(0, SIDEBAR_FOLDER_PREVIEW_COUNT);
+  const routeThread = threads.slice(SIDEBAR_FOLDER_PREVIEW_COUNT).find(input.isRouteThread);
+  if (routeThread !== undefined) visible.push(routeThread);
+  const hiddenCount = threads.length - visible.length;
+  // Showing less would hide nothing, so there is no toggle to offer.
+  if (hiddenCount === 0) return { threads, toggle: null, hiddenCount };
+  return input.showAll
+    ? { threads, toggle: "less", hiddenCount: 0 }
+    : { threads: visible, toggle: "more", hiddenCount };
 }
 
 export type SidebarV2TopStatusKind =

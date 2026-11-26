@@ -37,6 +37,8 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
+  previewSidebarFolderThreads,
+  SIDEBAR_FOLDER_PREVIEW_COUNT,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
   withoutRemovedCheckout,
@@ -1725,6 +1727,55 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+  });
+});
+
+describe("previewSidebarFolderThreads", () => {
+  const ids = (count: number) => Array.from({ length: count }, (_, index) => `t${index + 1}`);
+  const preview = (threads: readonly string[], showAll: boolean, routeThread: string | null) =>
+    previewSidebarFolderThreads(threads, {
+      showAll,
+      isRouteThread: (thread) => thread === routeThread,
+    });
+
+  it("lists a short folder whole with no toggle", () => {
+    expect(preview(ids(SIDEBAR_FOLDER_PREVIEW_COUNT), false, null)).toEqual({
+      threads: ids(SIDEBAR_FOLDER_PREVIEW_COUNT),
+      toggle: null,
+      hiddenCount: 0,
+    });
+  });
+
+  it("lists the first few of a long folder and counts the rest", () => {
+    expect(preview(ids(10), false, null)).toEqual({
+      threads: ids(SIDEBAR_FOLDER_PREVIEW_COUNT),
+      toggle: "more",
+      hiddenCount: 10 - SIDEBAR_FOLDER_PREVIEW_COUNT,
+    });
+  });
+
+  it("keeps the open thread listed when it sorts past the preview", () => {
+    expect(preview(ids(10), false, "t9")).toEqual({
+      threads: [...ids(SIDEBAR_FOLDER_PREVIEW_COUNT), "t9"],
+      toggle: "more",
+      hiddenCount: 10 - SIDEBAR_FOLDER_PREVIEW_COUNT - 1,
+    });
+    // The open thread is the only overflow, so nothing is left to show.
+    const justOver = ids(SIDEBAR_FOLDER_PREVIEW_COUNT + 1);
+    expect(preview(justOver, false, justOver.at(-1)!)).toEqual({
+      threads: justOver,
+      toggle: null,
+      hiddenCount: 0,
+    });
+    expect(preview(justOver, true, justOver.at(-1)!).toggle).toBeNull();
+  });
+
+  it("lists every thread with a Show less toggle once shown all", () => {
+    expect(preview(ids(10), true, null)).toEqual({
+      threads: ids(10),
+      toggle: "less",
+      hiddenCount: 0,
+    });
   });
 });
 

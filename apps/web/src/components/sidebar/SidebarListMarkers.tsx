@@ -1,6 +1,7 @@
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { type ReactNode, useLayoutEffect } from "react";
 import { cn } from "~/lib/utils";
 import {
@@ -143,5 +144,36 @@ export function SidebarSectionHeader(props: {
         {props.label}
       </CollapsibleSectionHeader>
     </SortableSidebarMarker>
+  );
+}
+
+/** A "Show more" or "Show less" row under a list that lists only its first rows. */
+export function SidebarRevealRow(props: {
+  /** The row's id in the sidebar tree, and the tree row it belongs to. */
+  row: string;
+  parent: string;
+  direction: "more" | "less";
+  busy?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  // Plus means "add", so revealing more uses a chevron.
+  const Icon = props.direction === "more" ? ChevronDownIcon : ChevronUpIcon;
+  return (
+    <li className="list-none">
+      <button
+        type="button"
+        data-sidebar-row={props.row}
+        data-sidebar-parent={props.parent}
+        aria-disabled={props.busy}
+        onClick={() => {
+          if (!props.busy) props.onClick();
+        }}
+        className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground aria-disabled:cursor-default"
+      >
+        <Icon aria-hidden className="size-4 shrink-0" />
+        {props.children}
+      </button>
+    </li>
   );
 }

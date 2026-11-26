@@ -68,14 +68,7 @@ import {
   type OlderSettledScope,
 } from "@t3tools/client-runtime/state/threads";
 
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  FolderIcon,
-  FolderPlusIcon,
-  PlusIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { CheckIcon, FolderIcon, FolderPlusIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -185,6 +178,7 @@ import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
+  previewSidebarFolderThreads,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -286,6 +280,7 @@ import {
 } from "./sidebar/SidebarProjectFolderHeader";
 import {
   SidebarDragBoundary,
+  SidebarRevealRow,
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
 } from "./sidebar/SidebarListMarkers";
@@ -486,6 +481,8 @@ function useSidebarThreads(input: {
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
+  const folderShowAllByKey = useUiStateStore((store) => store.sidebarFolderShowAllByKey);
+  const setFolderShowAll = useUiStateStore((store) => store.setSidebarFolderShowAll);
   const [settledTail, setSettledTail] = useState({
     scopeKey: projectScopeKey,
     count: SETTLED_TAIL_INITIAL_COUNT,
@@ -550,16 +547,34 @@ function useSidebarThreads(input: {
             projectExpandedById,
             sidebarFolderExpansionKeys(folder.group),
           );
+          if (collapsed) {
+            return {
+              group: folder.group,
+              collapsed,
+              // A closed folder still shows the open thread, and hints at the rest.
+              threads: routeThreadOnly(folder.threads, routeRowThreadKey),
+              hiddenThreads: folder.threads.filter(
+                (thread) => threadShellKey(thread) !== routeRowThreadKey,
+              ),
+              toggle: null,
+              hiddenCount: 0,
+            };
+          }
+          const preview = previewSidebarFolderThreads(folder.threads, {
+            showAll: folderShowAllByKey[folder.group.projectKey] === true,
+            isRouteThread: (thread) => threadShellKey(thread) === routeRowThreadKey,
+          });
           return {
             group: folder.group,
             collapsed,
-            // A closed folder still shows the open thread, and hints at the rest.
-            threads: collapsed
-              ? routeThreadOnly(folder.threads, routeRowThreadKey)
-              : folder.threads,
-            hiddenThreads: collapsed
-              ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
-              : EMPTY_THREADS,
+            threads: preview.threads,
+            // The header's dot says when a thread past the preview needs you.
+            hiddenThreads:
+              preview.toggle === "more"
+                ? folder.threads.filter((thread) => !preview.threads.includes(thread))
+                : EMPTY_THREADS,
+            toggle: preview.toggle,
+            hiddenCount: preview.hiddenCount,
           };
         });
   const orderedThreads = [
@@ -612,6 +627,8 @@ function useSidebarThreads(input: {
       const keys = sidebarFolderExpansionKeys(group);
       setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
     },
+    toggleProjectFolderThreads: (group: SidebarProjectSnapshot) =>
+      setFolderShowAll(group.projectKey, folderShowAllByKey[group.projectKey] !== true),
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
@@ -1357,6 +1374,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     toggleWorkingShelf,
     projectFolders,
     toggleProjectFolder,
+    toggleProjectFolderThreads,
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
@@ -2058,7 +2076,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const listMotionLayoutKey = [
     sidebarListItemsKey,
     projectFolders
-      ?.map((folder) => `${folder.group.projectKey}:${folder.threads.length}`)
+      ?.map(
+        (folder) =>
+          `${folder.group.projectKey}:${folder.toggle}:${folder.threads.map(threadShellKey).join(",")}`,
+      )
       .join("\n") ?? "",
     visibleDraftSessionCount,
     routeDraftIdForRows ?? "",
@@ -3641,13 +3662,26 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               onContextMenu={handleProjectFolderContextMenu}
                             />,
                           );
+                          const folderRow = sidebarFolderRowId(folder.group.projectKey);
                           for (const thread of folder.threads) {
+                            items.push(renderThreadRow(thread, "active", folderRow));
+                          }
+                          if (folder.toggle !== null) {
                             items.push(
-                              renderThreadRow(
-                                thread,
-                                "active",
-                                sidebarFolderRowId(folder.group.projectKey),
-                              ),
+                              <SidebarRevealRow
+                                key={`project-folder-more:${folder.group.projectKey}`}
+                                row={`${folderRow}:more`}
+                                parent={folderRow}
+                                direction={folder.toggle}
+                                onClick={() => toggleProjectFolderThreads(folder.group)}
+                              >
+                                {folder.toggle === "more"
+                                  ? gt(
+                                      "{count, plural, one {Show {count} more} other {Show {count} more}}",
+                                      { count: folder.hiddenCount },
+                                    )
+                                  : gt("Show less")}
+                              </SidebarRevealRow>,
                             );
                           }
                         }
@@ -3766,33 +3800,27 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     return items;
                   })()}
                   {settledShelfExpanded && hiddenSettledCount > 0 ? (
-                    <li className="list-none">
-                      <button
-                        type="button"
-                        data-sidebar-row="settled:more"
-                        data-sidebar-parent="shelf:settled"
-                        aria-disabled={olderSettledShelf.loading}
-                        onClick={() => {
-                          if (olderSettledShelf.loading) return;
-                          olderSettledShelf.retry();
-                          showMoreSettled();
-                        }}
-                        className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground aria-disabled:cursor-default"
-                      >
-                        {/* Plus means "add", so revealing more uses a chevron. */}
-                        <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
-                        {olderSettledShelf.loading
-                          ? gt("Loading")
-                          : olderSettledShelf.failed
-                            ? gt("Could not load older threads. Retry")
-                            : gt(
-                                "{count, plural, one {Show {count} more} other {Show {count} more}}",
-                                {
-                                  count: Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT),
-                                },
-                              )}
-                      </button>
-                    </li>
+                    <SidebarRevealRow
+                      row="settled:more"
+                      parent="shelf:settled"
+                      direction="more"
+                      busy={olderSettledShelf.loading}
+                      onClick={() => {
+                        olderSettledShelf.retry();
+                        showMoreSettled();
+                      }}
+                    >
+                      {olderSettledShelf.loading
+                        ? gt("Loading")
+                        : olderSettledShelf.failed
+                          ? gt("Could not load older threads. Retry")
+                          : gt(
+                              "{count, plural, one {Show {count} more} other {Show {count} more}}",
+                              {
+                                count: Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT),
+                              },
+                            )}
+                    </SidebarRevealRow>
                   ) : null}
                 </ul>
               </SortableContext>
