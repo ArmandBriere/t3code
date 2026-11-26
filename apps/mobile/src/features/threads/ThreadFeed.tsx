@@ -137,7 +137,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   useId,
   type ComponentPropsWithRef,
   type Dispatch,
@@ -160,7 +159,6 @@ import {
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
-import { useReduceMotionEnabled } from "../../lib/appState";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
 import {
@@ -258,7 +256,6 @@ import { type ThreadWorkGroupScrollPosition } from "./thread-feed-scroll-positio
 import {
   collapsedWorkLogHeight,
   ThreadDisclosureChevron,
-  THREAD_DISCLOSURE_TRANSITION_MS,
   ThreadWorkGroupToggle,
   ThreadThinkingRow,
   ThreadWorkLog,
@@ -3008,91 +3005,6 @@ function useThreadFeedPresentation(
   );
 }
 
-type DisclosureLayout = {
-  /** Each row's top relative to the anchor row's top, before the toggle. */
-  positions: ReadonlyMap<string, number>;
-  anchorIndex: number;
-  /** Distance from the anchor's top to the end of the content, before the toggle. */
-  anchorToEnd: number;
-  list: LegendListRef;
-  playing: boolean;
-};
-const DISCLOSURE_DETAIL_DELAY_MS = 135;
-const DISCLOSURE_DETAIL_FADE_MS = 70;
-const unsubscribeNothing = () => {};
-
-function feedContentEnd(state: ReturnType<LegendListRef["getState"]>): number | undefined {
-  const last = state.data.length - 1;
-  if (last < 0) return undefined;
-  const position = state.positionAtIndex(last);
-  return position === undefined ? undefined : position + state.sizeAtIndex(last);
-}
-
-function DisclosureRow(props: {
-  itemKey: string;
-  index: number;
-  layout: DisclosureLayout | null;
-  children: ReactNode;
-}) {
-  const { itemKey, layout } = props;
-  const previous = layout?.positions.get(itemKey);
-  const subscribe = useCallback(
-    (notify: () => void) => {
-      if (!layout || layout.playing || previous === undefined) return unsubscribeNothing;
-      const state = layout.list.getState();
-      const stops = [
-        state.listenToPosition(itemKey, notify),
-        state.listen("totalSize", notify),
-        state.listen("isAtEnd", notify),
-        state.listen("isFollowingEnd", notify),
-      ];
-      return () => {
-        for (const stop of stops) stop();
-      };
-    },
-    [itemKey, layout, previous],
-  );
-  // Rows hold their old screen spot relative to whatever stays still: the content end
-  // while the feed sits at the bottom (end follow, or a collapse that clamps the scroll),
-  // otherwise the anchored disclosure row.
-  const getOffset = () => {
-    if (!layout || layout.playing || previous === undefined) return 0;
-    const state = layout.list.getState();
-    const position = state.positionAtIndex(props.index);
-    if (position === undefined) return 0;
-    if (state.isFollowingEnd || state.isAtEnd) {
-      const end = feedContentEnd(state);
-      return end === undefined ? 0 : previous - layout.anchorToEnd - (position - end);
-    }
-    if (previous <= 0) return 0;
-    const anchor = state.positionAtIndex(layout.anchorIndex);
-    return anchor === undefined ? 0 : previous - (position - anchor);
-  };
-  const offset = useSyncExternalStore(subscribe, getOffset, getOffset);
-  const entering = !!layout && previous === undefined;
-  return (
-    <Animated.View
-      collapsable={false}
-      style={
-        layout
-          ? {
-              opacity: entering && !layout.playing ? 0 : 1,
-              transform: [{ translateY: offset }],
-              transitionProperty: layout?.playing ? (entering ? "opacity" : "transform") : "none",
-              transitionDuration: entering
-                ? DISCLOSURE_DETAIL_FADE_MS
-                : THREAD_DISCLOSURE_TRANSITION_MS,
-              transitionDelay: entering ? DISCLOSURE_DETAIL_DELAY_MS : 0,
-              transitionTimingFunction: "ease-out",
-            }
-          : undefined
-      }
-    >
-      {props.children}
-    </Animated.View>
-  );
-}
-
 // A thread switch remounts the feed. Starting from the last split pane's size lays rows out once,
 // instead of at width 0 and again when the new feed's own layout reports the same width.
 let lastSplitViewport: { windowWidth: number; width: number; height: number } | null = null;
@@ -3146,12 +3058,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const viewportWidth =
     settledPaneWidth !== null ? Math.round(settledPaneWidth) : measuredViewportWidth;
   const [viewportHeight, setViewportHeight] = useState(() => initialSplitViewport?.height ?? 0);
-  const [disclosureLayout, setDisclosureLayout] = useState<DisclosureLayout | null>(null);
-  const disclosureMotionRef = useRef<DisclosureLayout | null>(null);
-  const disclosureMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const disclosureSettleFrameRef = useRef<number | null>(null);
-  const disclosureSettleSecondFrameRef = useRef<number | null>(null);
-  const reduceMotion = useReduceMotionEnabled();
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
     readonly expandedWorkGroups: Record<string, boolean>;
@@ -3750,8 +3656,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const listAppearanceData = {
     gt,
     setupDetailsOpen,
-    disclosureLayout,
-    reduceMotion,
     onCiteAssistantText: props.onCiteAssistantText,
     formatMessageTime,
     worktreeSetup: props.worktreeSetup,
@@ -3962,96 +3866,21 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
   }
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears copy feedback and disclosure animation timers and frames on unmount
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears copy feedback timer on unmount
   useEffect(
     () => () => {
       if (copyFeedbackTimeoutRef.current) clearTimeout(copyFeedbackTimeoutRef.current);
-      if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
-      if (disclosureSettleFrameRef.current !== null) {
-        cancelAnimationFrame(disclosureSettleFrameRef.current);
-      }
-      if (disclosureSettleSecondFrameRef.current !== null) {
-        cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
-      }
     },
     [],
   );
 
-  const settleDisclosureAfterLayout = () => {
-    if (disclosureSettleFrameRef.current !== null) {
-      cancelAnimationFrame(disclosureSettleFrameRef.current);
-    }
-    if (disclosureSettleSecondFrameRef.current !== null) {
-      cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
-    }
-    disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-      disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        const motion = disclosureMotionRef.current;
-        if (motion && !motion.playing) {
-          const playing = { ...motion, playing: true };
-          disclosureMotionRef.current = playing;
-          setDisclosureLayout(playing);
-          disclosureMotionTimer.current = setTimeout(
-            () => {
-              disclosureMotionRef.current = null;
-              setDisclosureLayout(null);
-              disclosureMotionTimer.current = null;
-            },
-            DISCLOSURE_DETAIL_DELAY_MS + DISCLOSURE_DETAIL_FADE_MS + 16,
-          );
-        }
-        disclosureSettleFrameRef.current = null;
-        disclosureSettleSecondFrameRef.current = null;
-      });
-    });
-  };
-
-  const preserveDisclosurePosition = (anchorKey: string | null) => {
+  const anchorDisclosure = (anchorKey: string | null) => {
     const list = listRef.current;
     const working = props.activeWorkStartedAt !== null || props.runlessWorkActive === true;
     // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
     if (anchorKey !== null && list && !(working && list.getState().isFollowingEnd)) {
       list.cancelScroll();
       list.anchorVisibleContent({ key: anchorKey });
-    }
-    if (list && anchorKey && !reduceMotion) {
-      const state = list.getState();
-      const anchorIndex = state.indexByKey(anchorKey);
-      if (anchorIndex !== undefined) {
-        const anchor = state.positionAtIndex(anchorIndex);
-        const anchorTop = state.elementAtIndex(anchorIndex)?.getBoundingClientRect().top;
-        const positions = new Map<string, number>();
-        for (let i = state.startBuffered; i <= state.endBuffered; i++) {
-          const item = groupedFeed[i];
-          if (!item) continue;
-          const displayed =
-            disclosureMotionRef.current &&
-            state.elementAtIndex(i)?.firstElementChild?.getBoundingClientRect().top;
-          positions.set(
-            item.id,
-            displayed != null && anchorTop !== undefined
-              ? displayed - anchorTop
-              : state.positionAtIndex(i) - anchor,
-          );
-        }
-        const motion = {
-          positions,
-          anchorIndex,
-          anchorToEnd: (feedContentEnd(state) ?? anchor) - anchor,
-          list,
-          playing: false,
-        };
-        if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
-        disclosureMotionRef.current = motion;
-        setDisclosureLayout(motion);
-        settleDisclosureAfterLayout();
-      }
-    }
-  };
-
-  const handleItemSizeChanged = () => {
-    if (disclosureMotionRef.current && !disclosureMotionRef.current.playing) {
-      settleDisclosureAfterLayout();
     }
   };
 
@@ -4073,7 +3902,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   };
 
   const onToggleWorkGroup = (groupId: string, anchorKey?: string) => {
-    preserveDisclosurePosition(anchorKey ?? `work-toggle:${groupId}`);
+    anchorDisclosure(anchorKey ?? `work-toggle:${groupId}`);
     setInteractionState((current) => ({
       ...current,
       expandedWorkGroups: {
@@ -4085,7 +3914,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   // Lone rows share their group's disclosure state so opened details survive a second call joining.
   const onToggleWorkRow = (rowId: string, anchorKey?: string, groupId?: string) => {
-    preserveDisclosurePosition(anchorKey ?? null);
+    anchorDisclosure(anchorKey ?? null);
     setInteractionState((current) => {
       const expanded = !(current.expandedWorkRows[rowId] ?? false);
       return {
@@ -4113,7 +3942,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   };
 
   const onToggleTurnFold = (runId: RunId) => {
-    preserveDisclosurePosition(`run-fold:${runId}`);
+    anchorDisclosure(`run-fold:${runId}`);
     setInteractionState((current) => {
       const next = new Set(current.expandedTurnIds);
       if (next.has(runId)) {
@@ -4193,102 +4022,96 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, [textSizeKey, contentWidth, hasHtmlRenders, listRef]);
 
   const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
-    <DisclosureRow
+    <MessageImageGalleryScope
       key={info.item.id}
-      itemKey={info.item.id}
-      index={info.index}
-      layout={disclosureLayout}
+      entry={info.item}
+      environmentId={props.environmentId}
+      threadId={props.threadId}
+      workspaceRoot={props.workspaceRoot}
     >
-      <MessageImageGalleryScope
-        entry={info.item}
-        environmentId={props.environmentId}
-        threadId={props.threadId}
-        workspaceRoot={props.workspaceRoot}
-      >
-        <ThreadMediaVisibility rowId={info.item.id} setRetainedRowId={setRetainedMediaRowId}>
-          {info.item.type === "message" &&
-          info.item.message.projectedItem?.item.type === "user_message" &&
-          info.item.message.projectedItem.item.freshContext ? (
-            <ThreadContextDivider
-              label={gt("New session")}
-              icon="arrow.clockwise"
-              iconColor={iconSubtleColor}
-            />
-          ) : null}
-          {info.item.type === "message" &&
-          !isCompactionCommandFeedEntry(info.item) &&
-          info.item.message.projectedItem?.item.type === "user_message" &&
-          info.item.message.projectedItem.item.modelSwitch ? (
-            <ThreadModelSwitchDivider
-              environmentId={props.environmentId}
-              modelSwitch={info.item.message.projectedItem.item.modelSwitch}
-              iconColor={iconSubtleColor}
-            />
-          ) : null}
-          {renderFeedEntry(info, {
-            m,
-            userMessageGrouping: info.item.userMessageGrouping,
-            formatMessageTime,
-            environmentId: props.environmentId,
-            dispatchingMessageId: props.dispatchingMessageId,
-            pendingFoldMessageId,
-            setupFoldRowId,
-            worktreeSetup: props.worktreeSetup,
-            setupDetailsOpen,
-            onOpenSetupDetails: openSetupDetails,
-            onEditPendingMessage: props.onEditPendingMessage,
-            onUseArtifactTemplate: props.onUseArtifactTemplate,
-            onCiteAssistantText: props.onCiteAssistantText,
-            threadId: props.threadId,
-            copiedRowId,
-            expandedWorkRows,
-            workRowSizing,
-            workGroupScrollPositions,
-            terminalAssistantMessageIds,
-            unsettledTurnId,
-            compactionLabelsByEntryId,
-            failedRunIds,
-            onCopyWorkRow,
-            onToggleWorkGroup,
-            onToggleWorkRow,
-            onToggleUserMessage,
-            onToggleTurnFold,
-            onPressPreview,
-            onPlaybackStart: onInlinePlaybackStart,
-            markdownLinkHandlers,
-            renderMarkdownImage,
-            renderViewedImage,
-            renderReasoning,
-            iconSubtleColor,
-            replyActionSize,
-            screenColor,
-            userBubbleColor,
-            markdownStyles,
-            reviewCommentColors,
-            reviewCommentBubbleWidth,
-            themeAppearance,
-            duoColumns,
-            userBubbleMaxWidth,
-            markdownContentWidth,
-            contentWidth,
-            threadTitle: props.threadTitle,
-            skills: props.skills,
-            workspaceRoot: props.workspaceRoot,
-            workflowOpening,
-          })}
-          {props.worktreeSetup && info.index === setupAnchorIndex ? (
-            <WorktreeSetupCard
-              key={props.threadId}
-              {...props.worktreeSetup}
-              detailsOpen={setupDetailsOpen}
-              onOpenDetails={openSetupDetails}
-            />
-          ) : props.preparingWorktree && info.index === setupAnchorIndex ? (
-            <WorktreePreparingHeader />
-          ) : null}
-        </ThreadMediaVisibility>
-      </MessageImageGalleryScope>
-    </DisclosureRow>
+      <ThreadMediaVisibility rowId={info.item.id} setRetainedRowId={setRetainedMediaRowId}>
+        {info.item.type === "message" &&
+        info.item.message.projectedItem?.item.type === "user_message" &&
+        info.item.message.projectedItem.item.freshContext ? (
+          <ThreadContextDivider
+            label={gt("New session")}
+            icon="arrow.clockwise"
+            iconColor={iconSubtleColor}
+          />
+        ) : null}
+        {info.item.type === "message" &&
+        !isCompactionCommandFeedEntry(info.item) &&
+        info.item.message.projectedItem?.item.type === "user_message" &&
+        info.item.message.projectedItem.item.modelSwitch ? (
+          <ThreadModelSwitchDivider
+            environmentId={props.environmentId}
+            modelSwitch={info.item.message.projectedItem.item.modelSwitch}
+            iconColor={iconSubtleColor}
+          />
+        ) : null}
+        {renderFeedEntry(info, {
+          m,
+          userMessageGrouping: info.item.userMessageGrouping,
+          formatMessageTime,
+          environmentId: props.environmentId,
+          dispatchingMessageId: props.dispatchingMessageId,
+          pendingFoldMessageId,
+          setupFoldRowId,
+          worktreeSetup: props.worktreeSetup,
+          setupDetailsOpen,
+          onOpenSetupDetails: openSetupDetails,
+          onEditPendingMessage: props.onEditPendingMessage,
+          onUseArtifactTemplate: props.onUseArtifactTemplate,
+          onCiteAssistantText: props.onCiteAssistantText,
+          threadId: props.threadId,
+          copiedRowId,
+          expandedWorkRows,
+          workRowSizing,
+          workGroupScrollPositions,
+          terminalAssistantMessageIds,
+          unsettledTurnId,
+          compactionLabelsByEntryId,
+          failedRunIds,
+          onCopyWorkRow,
+          onToggleWorkGroup,
+          onToggleWorkRow,
+          onToggleUserMessage,
+          onToggleTurnFold,
+          onPressPreview,
+          onPlaybackStart: onInlinePlaybackStart,
+          markdownLinkHandlers,
+          renderMarkdownImage,
+          renderViewedImage,
+          renderReasoning,
+          iconSubtleColor,
+          replyActionSize,
+          screenColor,
+          userBubbleColor,
+          markdownStyles,
+          reviewCommentColors,
+          reviewCommentBubbleWidth,
+          themeAppearance,
+          duoColumns,
+          userBubbleMaxWidth,
+          markdownContentWidth,
+          contentWidth,
+          threadTitle: props.threadTitle,
+          skills: props.skills,
+          workspaceRoot: props.workspaceRoot,
+          workflowOpening,
+        })}
+        {props.worktreeSetup && info.index === setupAnchorIndex ? (
+          <WorktreeSetupCard
+            key={props.threadId}
+            {...props.worktreeSetup}
+            detailsOpen={setupDetailsOpen}
+            onOpenDetails={openSetupDetails}
+          />
+        ) : props.preparingWorktree && info.index === setupAnchorIndex ? (
+          <WorktreePreparingHeader />
+        ) : null}
+      </ThreadMediaVisibility>
+    </MessageImageGalleryScope>
   );
 
   if (props.contentPresentation.kind === "unavailable" && props.queuedMessages.length === 0) {
@@ -4382,7 +4205,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               landingFallback.current = setTimeout(() => setLandedListKey(feedThreadKey), 1000);
             }}
             onLayout={handleMetricsChange}
-            onItemSizeChanged={handleItemSizeChanged}
             onScroll={handleScroll}
             scrollEventThrottle={16}
             ListHeaderComponent={

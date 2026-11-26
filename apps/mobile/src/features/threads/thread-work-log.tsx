@@ -103,8 +103,6 @@ import { FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
 import Animated, {
   FadeIn,
-  FadeOut,
-  LinearTransition,
   ReduceMotion,
   useAnimatedScrollHandler,
   useAnimatedStyle,
@@ -118,10 +116,8 @@ import { startShimmerSteps } from "./work-shimmer-steps";
 
 const SHIMMER_WIDTH = 72;
 const SHIMMER_ICON_AND_GAP_WIDTH = 30;
-export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
-const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
+const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
-const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
 type WorkContentIcon =
   | AppSymbolName
   | "browser"
@@ -1106,7 +1102,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
 
   return (
     <Animated.View
-      layout={WORK_LOG_LAYOUT_TRANSITION}
       className="overflow-hidden"
       {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
     >
@@ -1272,8 +1267,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         row.workEntry.questionAnswer) ? (
         <Animated.View
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
-          exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
-          layout={WORK_LOG_LAYOUT_TRANSITION}
           className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
         >
           {row.workEntry.questionAnswer ? (
