@@ -150,6 +150,9 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
 
 const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
   state.devUrl ??
+  // A recorded public origin (for example an ingress) beats interface discovery,
+  // which would pick a container-internal address.
+  state.publicUrl ??
   resolveHeadlessConnectionString(state.host, state.port, {
     privateNetworkOnly: state.privateNetworkOnly,
   });

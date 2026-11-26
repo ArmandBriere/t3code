@@ -428,6 +428,19 @@ const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 
+/**
+ * Deployment-configured default lifetime for issued sessions
+ * (T3CODE_CLIENT_SESSION_TTL_DAYS); undefined keeps the 30-day default.
+ */
+const resolveConfiguredSessionTtl = (
+  configured: Duration.Duration | undefined,
+): Duration.Duration | undefined => {
+  if (configured === undefined) return undefined;
+  const days = Duration.toMillis(configured) / Duration.toMillis(Duration.days(1));
+  if (!Number.isInteger(days) || days < 1 || days > 3650) return undefined;
+  return configured;
+};
+
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
   kind: Schema.Literal("session"),
@@ -650,7 +663,11 @@ const make = Effect.gen(function* () {
       );
       const issuedAt = yield* DateTime.now;
       const expiresAt = DateTime.add(issuedAt, {
-        milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_SESSION_TTL),
+        milliseconds: Duration.toMillis(
+          input?.ttl ??
+            resolveConfiguredSessionTtl(serverConfig.clientSessionTtl) ??
+            DEFAULT_SESSION_TTL,
+        ),
       });
       const claims: SessionClaims = {
         v: 1,

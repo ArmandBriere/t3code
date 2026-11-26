@@ -23,6 +23,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeUtil from "node:util";
 
+import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -384,6 +385,19 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
     "ProviderMaintenanceRunner.updateProvider",
   )(function* (target) {
+    // In an image-managed deployment the provider binaries belong to the
+    // container image: an in-place npm/pip update would either fail on
+    // root-owned files (EACCES under /usr/local) or drift from the image.
+    // Updates happen by merging an image bump and rolling the deployment.
+    const serverConfigOption = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+    if (Option.isSome(serverConfigOption) && serverConfigOption.value.containerMode === true) {
+      const provider = typeof target === "string" ? target : target.provider;
+      return yield* new ServerProviderUpdateError({
+        provider,
+        reason:
+          "This server runs in a container with image-managed providers. Update the image instead of running in-place provider updates.",
+      });
+    }
     const provider = typeof target === "string" ? target : target.provider;
     const instanceId =
       typeof target === "string"

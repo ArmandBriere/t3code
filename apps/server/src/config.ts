@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -87,6 +88,19 @@ export class ServerConfig extends Context.Service<
     readonly host: string | undefined;
     /** Set when the host was defaulted to a private-network listener for the service. */
     readonly privateNetworkOnly?: boolean | undefined;
+    /**
+     * Absolute origin clients should reach this server through (for example an
+     * ingress in front of a container). Used verbatim for startup connection
+     * strings and pairing URLs instead of a discovered interface address.
+     */
+    readonly publicUrl?: string | undefined;
+    /** Default lifetime for issued client sessions, replacing the 30-day default. */
+    readonly clientSessionTtl?: Duration.Duration | undefined;
+    /**
+     * Marks a container/image-managed deployment: provider binaries are owned
+     * by the image, so in-place provider updates are refused.
+     */
+    readonly containerMode?: boolean | undefined;
     readonly cwd: string;
     readonly baseDir: string;
     readonly staticDir: string | undefined;

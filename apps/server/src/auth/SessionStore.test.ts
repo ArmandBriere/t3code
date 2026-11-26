@@ -50,6 +50,12 @@ const layerSessionStore = (
     Layer.provide(layerServerConfig(overrides)),
   );
 
+/** Decode the issued signed token's claims: base64url(JSON).signature. */
+const decodeIssuedClaims = (token: string): { readonly iat: number; readonly exp: number } => {
+  const [payload] = token.split(".");
+  return JSON.parse(base64UrlDecodeUtf8(payload!)) as { iat: number; exp: number };
+};
+
 const relaySessionInput = {
   subject: "managed-relay-bootstrap",
   method: "dpop-access-token",
@@ -591,6 +597,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
         expect(revokedClientWebSocket.sessionId).toBe(client.sessionId);
         expect(revokedClientWebSocket.revokedAt.epochMilliseconds).toBeGreaterThanOrEqual(0);
       }
+    }).pipe(Effect.provide(layerSessionStore())),
+  );
+
+  it.effect("issues sessions with the configured client session TTL", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue({ subject: "owner" });
+      const claims = decodeIssuedClaims(client.token);
+      expect(claims.exp - claims.iat).toBe(Duration.toMillis(Duration.days(365)));
+    }).pipe(Effect.provide(layerSessionStore({ clientSessionTtl: Duration.days(365) }))),
+  );
+
+  it.effect("keeps the 30-day default when no client session TTL is configured", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue({ subject: "owner" });
+      const claims = decodeIssuedClaims(client.token);
+      expect(claims.exp - claims.iat).toBe(Duration.toMillis(Duration.days(30)));
     }).pipe(Effect.provide(layerSessionStore())),
   );
 });

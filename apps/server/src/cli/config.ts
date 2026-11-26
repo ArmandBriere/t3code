@@ -172,7 +172,69 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   lan: Config.Boolean("T3CODE_LAN").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  publicUrl: Config.String("T3CODE_PUBLIC_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  clientSessionTtlDays: Config.Int("T3CODE_CLIENT_SESSION_TTL_DAYS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  containerMode: Config.Boolean("T3CODE_CONTAINER_MODE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
+
+/** Accept any absolute http(s) URL; use its bare origin (no path, query, hash, or credentials). */
+const quoted = (value: string): string => `"${value.replaceAll('"', "'")}"`;
+
+const parsePublicUrl = (raw: string): Effect.Effect<string, CliError.UserError> =>
+  Effect.suspend(() => {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch (cause) {
+      return Effect.fail(
+        new CliError.UserError({
+          cause,
+          userMessage: `T3CODE_PUBLIC_URL must be an absolute http(s) origin (got ${quoted(raw)}).`,
+        }),
+      );
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return Effect.fail(
+        new CliError.UserError({
+          cause: raw,
+          userMessage: `T3CODE_PUBLIC_URL must use http or https (got ${quoted(raw)}).`,
+        }),
+      );
+    }
+    if (url.username || url.password) {
+      return Effect.fail(
+        new CliError.UserError({
+          cause: raw,
+          userMessage: `T3CODE_PUBLIC_URL must not contain credentials (got ${quoted(raw)}).`,
+        }),
+      );
+    }
+    return Effect.succeed(url.origin);
+  });
+
+const CLIENT_SESSION_TTL_DAYS_MIN = 1;
+const CLIENT_SESSION_TTL_DAYS_MAX = 3650;
+
+const parseClientSessionTtlDays = (
+  days: number,
+): Effect.Effect<Duration.Duration, CliError.UserError> =>
+  days >= CLIENT_SESSION_TTL_DAYS_MIN && days <= CLIENT_SESSION_TTL_DAYS_MAX
+    ? Effect.succeed(Duration.days(days))
+    : Effect.fail(
+        new CliError.UserError({
+          cause: days,
+          userMessage: `T3CODE_CLIENT_SESSION_TTL_DAYS must be between ${String(CLIENT_SESSION_TTL_DAYS_MIN)} and ${String(CLIENT_SESSION_TTL_DAYS_MAX)} days (got ${String(days)}).`,
+        }),
+      );
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
   Config.map((token) => Redacted.make(Redacted.value(token).trim())),
@@ -440,6 +502,15 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const host = Option.getOrElse(explicitHost, () =>
     privateNetworkOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
   );
+  const publicUrl =
+    env.publicUrl !== undefined && env.publicUrl.trim().length > 0
+      ? yield* parsePublicUrl(env.publicUrl.trim())
+      : undefined;
+  const clientSessionTtl =
+    env.clientSessionTtlDays === undefined
+      ? undefined
+      : yield* parseClientSessionTtlDays(env.clientSessionTtlDays);
+  const containerMode = env.containerMode ?? undefined;
   const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
   const otel = yield* OtelEnvironment.load;
@@ -505,6 +576,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     serverTracePath,
     host,
     ...(privateNetworkOnly ? { privateNetworkOnly } : {}),
+    ...(publicUrl ? { publicUrl } : {}),
+    ...(clientSessionTtl ? { clientSessionTtl } : {}),
+    ...(containerMode ? { containerMode } : {}),
     staticDir,
     devUrl,
     ...(devAuthToken === undefined ? {} : { devAuthToken }),

@@ -197,11 +197,15 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
   const serverConfig = yield* ServerConfig.ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const connectionString = resolveHeadlessConnectionString(
-    serverConfig.host,
-    resolveListeningPort(httpServer.address, serverConfig.port),
-    { privateNetworkOnly: serverConfig.privateNetworkOnly },
-  );
+  // A configured public origin (for example an ingress in front of a container)
+  // is reachable from clients; a discovered interface address may not be.
+  const connectionString =
+    serverConfig.publicUrl ??
+    resolveHeadlessConnectionString(
+      serverConfig.host,
+      resolveListeningPort(httpServer.address, serverConfig.port),
+      { privateNetworkOnly: serverConfig.privateNetworkOnly },
+    );
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
   return {

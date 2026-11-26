@@ -1,4 +1,4 @@
-import { describe, it, assert } from "@effect/vitest";
+import { describe, it, assert, expect } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -17,11 +17,13 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
+import * as ServerConfig from "../config.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
@@ -277,6 +279,71 @@ function layerFailingLatestLookupAfterFirst() {
 }
 
 describe("providerMaintenanceRunner", () => {
+  const MODEL_MANIFEST: ModelManifest.ModelManifestData = {
+    version: 1,
+    currentModels: {},
+    compatibility: [CODEX_DRIVER, OPENCODE_DRIVER].map((driver) => ({
+      driver,
+      t3CodeRange: ">=0.0.42",
+      ranges: [],
+    })),
+  };
+
+  it.effect("refuses provider updates in container mode without spawning anything", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseNativeCliProvider);
+      const updater = yield* Effect.service(
+        ProviderMaintenanceRunner.ProviderMaintenanceRunner,
+      ).pipe(
+        Effect.provide(
+          ProviderMaintenanceRunner.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ProviderRegistry.ProviderRegistry, registry),
+                Layer.succeed(ModelManifest.ModelManifest, {
+                  current: Effect.succeed(MODEL_MANIFEST),
+                  refresh: Effect.succeed(MODEL_MANIFEST),
+                  forceRefresh: Effect.succeed(MODEL_MANIFEST),
+                  refreshOnDemand: Effect.succeed(MODEL_MANIFEST),
+                  refreshInBackground: Effect.void,
+                }),
+                ProviderLatestVersions.layer,
+                FetchHttpClient.layer,
+              ),
+            ),
+          ),
+        ),
+      );
+      const error = yield* Effect.flip(updater.updateProvider(NATIVE_CLI_DRIVER));
+      assert.deepStrictEqual(calls, []);
+      expect(error.reason).toContain("image-managed");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          NodeServices.layer,
+          Layer.effect(
+            ServerConfig.ServerConfig,
+            Effect.map(ServerConfig.ServerConfig, (config) => ({
+              ...config,
+              containerMode: true,
+            })),
+          ).pipe(
+            Layer.provide(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-maintenance-" }),
+            ),
+            Layer.provide(NodeServices.layer),
+          ),
+          layerMockSpawner((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {

@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -964,6 +965,82 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         host: undefined,
         privateNetworkOnly: undefined,
       });
+    }),
+  );
+
+  it.effect("reads the public URL, session TTL, and container mode from the environment", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-public-url-" })),
+      );
+      const layerConfig = ConfigProvider.layer(
+        ConfigProvider.fromEnv({
+          env: {
+            T3CODE_PUBLIC_URL: "https://t3code.example.com",
+            T3CODE_CLIENT_SESSION_TTL_DAYS: "365",
+            T3CODE_CONTAINER_MODE: "true",
+          },
+        }),
+      );
+      const config = yield* resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
+        Effect.provide(Layer.mergeAll(layerConfig, NetService.layer)),
+      );
+      expect(config.publicUrl).toBe("https://t3code.example.com");
+      expect(config.clientSessionTtl && Duration.toMillis(config.clientSessionTtl)).toBe(
+        Duration.toMillis(Duration.days(365)),
+      );
+      expect(config.containerMode).toBe(true);
+    }),
+  );
+
+  it.effect("normalizes a public URL with a path, query, or hash down to its origin", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) =>
+          fs.makeTempDirectoryScoped({ prefix: "t3-cli-public-url-normalize-" }),
+        ),
+      );
+      const layerConfig = ConfigProvider.layer(
+        ConfigProvider.fromEnv({ env: { T3CODE_PUBLIC_URL: "https://t3.example.com/pair#x=1" } }),
+      );
+      const config = yield* resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
+        Effect.provide(Layer.mergeAll(layerConfig, NetService.layer)),
+      );
+      expect(config.publicUrl).toBe("https://t3.example.com");
+    }),
+  );
+
+  it.effect("rejects a non-origin public URL and an out-of-range session TTL", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) =>
+          fs.makeTempDirectoryScoped({ prefix: "t3-cli-public-url-invalid-" }),
+        ),
+      );
+      const ftp = yield* resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_PUBLIC_URL: "ftp://t3.example.com" } }),
+            ),
+            NetService.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(String(ftp)).toContain("T3CODE_PUBLIC_URL");
+      const ttl = yield* resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_CLIENT_SESSION_TTL_DAYS: "0" } }),
+            ),
+            NetService.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(String(ttl)).toContain("T3CODE_CLIENT_SESSION_TTL_DAYS");
     }),
   );
 });
