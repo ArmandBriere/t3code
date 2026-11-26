@@ -9,7 +9,7 @@
 # The npm launcher requests
 #   ${T3CODE_RELEASE_BASE_URL}/v<version>/t3-<version>-linux-x64.tar.gz
 # plus that release's SHA256SUMS, so the artifacts below use exactly those
-# names and the release tag must be v<version> (v0.1.9).
+# names and the release tag must be v<version> (v0.1.9-minirack.1).
 #
 # Mirrors release.yml's build_bundle + release-desktop.yml's Linux CLI archive
 # on plain GitHub-hosted runners (no Blacksmith, no signing, no notarization).
@@ -20,13 +20,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version (must match the npm launcher pin, e.g. 0.1.9)
+        description: Release version (distinct from stock so PVCs re-download, e.g. 0.1.9-minirack.1)
         required: true
-        default: "0.1.9"
+        default: "0.1.9-minirack.1"
       tag:
-        description: Release tag the npm launcher downloads from (e.g. v0.1.9)
+        description: Release tag the npm launcher downloads from (e.g. v0.1.9-minirack.1)
         required: true
-        default: "v0.1.9"
+        default: "v0.1.9-minirack.1"
   push:
     branches:
       - "minirack/**"
@@ -58,7 +58,7 @@ jobs:
           install-args: --filter=t3... --filter=@t3tools/scripts...
 
       - name: Align package versions to release version
-        run: node scripts/update-release-package-versions.ts "${{ inputs.version || '0.1.9' }}"
+        run: node scripts/update-release-package-versions.ts "${{ inputs.version || '0.1.9-minirack.1' }}"
 
       # Builds the server bundle plus the web client into apps/server/dist.
       - name: Build JS bundle
@@ -90,12 +90,12 @@ jobs:
           node scripts/build-cli-archive.ts \
             --platform linux \
             --arch x64 \
-            --version "${{ inputs.version || '0.1.9' }}" \
+            --version "${{ inputs.version || '0.1.9-minirack.1' }}" \
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
             --output-dir release-cli
 
       - name: Smoke-test CLI archive
-        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version || '0.1.9' }}"
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version || '0.1.9-minirack.1' }}"
 
       # The npm launcher validates the archive against this file by name.
       - name: Write SHA256SUMS
@@ -105,6 +105,16 @@ jobs:
           sha256sum -- *.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
+      - name: Build the npm launcher
+        run: |
+          node scripts/build-npm-launcher.ts \
+            --version "${{ inputs.version || '0.1.9-minirack.1' }}" \
+            --output-dir npm-packages
+
+      # The minirack image installs this launcher instead of the stock npm
+      # `t3` package: the launcher pins its own version, and a fork version
+      # (0.1.9-minirack.1) is what makes PVCs that already cached stock
+      # 0.1.9 re-download the patched runtime.
       - name: Publish release
         env:
           # GITHUB_TOKEN on forks may stay read-only for the releases API even
@@ -114,11 +124,12 @@ jobs:
           set -euo pipefail
           # Replace any earlier fork release under the same tag; the tag must
           # point at this patched tree, not at the inherited upstream tag.
-          gh release delete "${{ inputs.tag || 'v0.1.9' }}" --yes --cleanup-tag || true
-          git push origin ":refs/tags/${{ inputs.tag || 'v0.1.9' }}" || true
-          gh release create "${{ inputs.tag || 'v0.1.9' }}" \
+          gh release delete "${{ inputs.tag || 'v0.1.9-minirack.1' }}" --yes --cleanup-tag || true
+          git push origin ":refs/tags/${{ inputs.tag || 'v0.1.9-minirack.1' }}" || true
+          gh release create "${{ inputs.tag || 'v0.1.9-minirack.1' }}" \
             --target "$GITHUB_SHA" \
-            --title "${{ inputs.tag || 'v0.1.9' }} (minirack patched)" \
+            --title "${{ inputs.tag || 'v0.1.9-minirack.1' }} (minirack patched)" \
             --notes "Minirack fork runtime: T3CODE_PUBLIC_URL, T3CODE_CLIENT_SESSION_TTL_DAYS, T3CODE_CONTAINER_MODE. Built from $GITHUB_SHA." \
-            release-cli/t3-${{ inputs.version || '0.1.9' }}-linux-x64.tar.gz \
-            release-cli/SHA256SUMS
+            release-cli/t3-${{ inputs.version || '0.1.9-minirack.1' }}-linux-x64.tar.gz \
+            release-cli/SHA256SUMS \
+            npm-packages/t3.tgz
